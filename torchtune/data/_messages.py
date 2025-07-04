@@ -693,7 +693,7 @@ class OpenAIToMessages(Transform):
                 )
         return converted_content
 
-    def __call__(self, sample: Mapping[str, Any]) -> Mapping[str, Any]:
+    def __call__(self, sample: Mapping[str, Any], masking_indices: list[int] = []) -> Mapping[str, Any]:
         """
         Return a list of Message objects from the provided sample dict.
 
@@ -739,7 +739,7 @@ class OpenAIToMessages(Transform):
                     eot=eot,
                 ),
             )
-        mask_messages(updated_messages, self.masking_strategy)
+        mask_messages(updated_messages, self.masking_strategy, masking_indices)
         return {"messages": updated_messages}
 
 
@@ -824,7 +824,7 @@ class AlpacaToMessages(Transform):
             ),
         }
 
-    def __call__(self, sample: Mapping[str, Any]) -> Mapping[str, Any]:
+    def __call__(self, sample: Mapping[str, Any], masking_indices: list[int] = []) -> Mapping[str, Any]:
         key_input = self._column_map.get("input", "input")
         if key_input in sample and sample[key_input]:
             prompt = self.template["prompt_input"].format(
@@ -848,7 +848,7 @@ class AlpacaToMessages(Transform):
                 eot=True,
             ),
         ]
-        mask_messages(messages, self.masking_strategy)
+        mask_messages(messages, self.masking_strategy, masking_indices)
         return {"messages": messages}
 
 
@@ -887,10 +887,12 @@ def validate_messages(
             raise ValueError(
                 f"Assistant message before expected user, tool or ipython message at index {i} in messages"
             )
-        if message.role == "user" and last_message.role == "user":
-            raise ValueError(
-                f"Two consecutive user messages at index {i} and {i - 1} in messages"
-            )
+        # NOTE: Need double user because while we could keep the tool call as a tool role instead of user,
+        # and have a valid loss, we will not be aligned with the roles at inference time
+        # if message.role == "user" and last_message.role == "user":
+        #     raise ValueError(
+        #         f"Two consecutive user messages at index {i} and {i - 1} in messages"
+        #     )
         if message.role == "system" and i > 0:
             raise ValueError(
                 f"System message at index {i} in messages, but system messages must come first"
@@ -901,8 +903,8 @@ def validate_messages(
             )
         last_message = message
 
-
-def mask_messages(messages: list[Message], masking_strategy: MaskingStrategy) -> None:
+# NOTE: modify to add masking to specific indices
+def mask_messages(messages: list[Message], masking_strategy: MaskingStrategy, masking_indices: list[int]) -> None:
     """
     Set the masked attribute for each message in the list based on the specified masking strategy.
 
@@ -917,7 +919,10 @@ def mask_messages(messages: list[Message], masking_strategy: MaskingStrategy) ->
     """
     masking_strategy = MaskingStrategy(masking_strategy)
     marked_last_assistant_message = False
+    ### Changes
+    message_idx = len(messages)
     for message in reversed(messages):
+        message_idx -= 1 # Decrement here to ensure update even when `continue` is called
         # System messages are always masked
         if message.role == "system":
             message.masked = True
@@ -933,3 +938,8 @@ def mask_messages(messages: list[Message], masking_strategy: MaskingStrategy) ->
             message.masked = message.role == "user" and message.contains_media
         elif masking_strategy == MaskingStrategy.TRAIN_ON_ASSISTANT:
             message.masked = message.role != "assistant"
+        
+        # Set masks based on masking indices
+        if message_idx in masking_indices:
+            message.masked = True
+    ### Changes

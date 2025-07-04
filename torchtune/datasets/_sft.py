@@ -11,7 +11,7 @@ from datasets import load_dataset
 from torch.utils.data import Dataset
 
 from torchtune.data._common import CROSS_ENTROPY_IGNORE_IDX
-from torchtune.data._messages import validate_messages
+from torchtune.data._messages import validate_messages, OpenAIToMessages, AlpacaToMessages
 
 from torchtune.modules.transforms import Transform
 
@@ -145,7 +145,14 @@ class SFTTransform(Transform):
 
     def __call__(self, sample: Mapping[str, Any]) -> dict[str, Any]:
         if self._message_transform is not None:
-            transformed_sample = self._message_transform(sample)
+            if (
+                "masking_indices" in sample.keys()
+                and (isinstance(self._message_transform, OpenAIToMessages) 
+                or isinstance(self._message_transform, AlpacaToMessages))
+            ):  
+                transformed_sample = self._message_transform(sample, masking_indices=sample["masking_indices"])
+            else:
+                transformed_sample = self._message_transform(sample)
             if "messages" in transformed_sample:
                 validate_messages(transformed_sample["messages"])
         else:
